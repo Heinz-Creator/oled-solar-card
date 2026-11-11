@@ -1,0 +1,7 @@
+type: custom:oled-solar-card
+title: OLED Solar
+entities:
+  solar: sensor.pv_leistung
+  house: sensor.hausverbrauch
+  grid: sensor.netzleistung
+  yield_today: sensor.pv_ertrag_heute

@@ -1,0 +1,21 @@
+type: custom:oled-solar-card
+edition: pro
+title: OLED Solar
+capacity_kwp: 8.4
+entities:
+  solar: sensor.pv_ost_leistung
+  house: sensor.hausverbrauch
+  grid: sensor.netzleistung
+  battery: sensor.speicherleistung
+  battery_soc: sensor.speicher_ladezustand
+  ev: sensor.wallbox_leistung
+  yield_today: sensor.pv_ertrag_heute
+pv_inputs:
+  - sensor.pv_west_leistung
+devices:
+  - entity: sensor.waermepumpe_leistung
+    name: Wärmepumpe
+    kind: heat
+pro:
+  buy_ct_kwh: 32
+  feed_in_ct_kwh: 8
