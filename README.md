@@ -18,6 +18,12 @@ Animierte Photovoltaik-Karte mit Sonnenbahn, Gerätemotiven und Live-Stromfluss.
 
 Die Beispiele verwenden Platzhalter. Ersetze die Entitäts-IDs durch deine Sensoren. Leistungssensoren können W, kW oder MW liefern. Energiezähler können Wh, kWh oder MWh liefern. Speicher, Netz und Wallbox sind optional. Für den Vorjahresvergleich braucht Pro die Langzeitstatistik aus dem HA-Energiedashboard oder eigene Statistik-IDs unter `statistics`.
 
+## Regionaler Ertragsvergleich
+
+Die Karte vergleicht den Ertrag deiner Anlage in **kWh pro installiertem kWp** mit gemeldeten Erträgen aus der [kostenlosen SFV-Ertragsdatenbank](https://www.sfv.de/tools/ertragsdatenbank). Die Anlagen können unterschiedlich groß sein. Beim verwendeten Durchschnitt fallen leistungsstärkere Anlagen stärker ins Gewicht. Dachneigung, Ausrichtung und Verschattung können abweichen.
+
+Mit Ort oder PLZ findest du die zweistellige PLZ-Region. Mit **PLZ von / bis** lässt sich der fünfstellige Bereich für abgeschlossene Jahre eingrenzen. Wähle für ein älteres Jahr den Zeitraum **Jahr** und das gewünschte Jahr aus. Bei einem Tages- oder Monatsbericht zeigt die Karte im Von-bis-Vergleich das letzte abgeschlossene Jahr.
+
 ## Eigenes Hausfoto
 
 Öffne **Hausfoto** in der animierten Ansicht. Ein dort gewähltes Foto speichert der Browser lokal. Für mehrere Geräte kann die Karte ein Foto aus dem HA-Ordner `www` verwenden. Trage dessen Adresse im Karteneditor unter **Hausfoto für alle Geräte** ein, etwa `/local/mein-haus.webp`.

@@ -1,7 +1,10 @@
 import regions from './regionen-de.json';
 
 const SFV = 'https://pv-ertraege.sfv.de/auswertung/region.html';
+export const sfvCriteriaURL = 'https://pv-ertraege.sfv.de/auswertung/eigene.html';
 export const regionURL = (region, year) => SFV + '?' + new URLSearchParams({ j: year, r: region, a: 'jahr' });
+
+export const validPostalRange = (from, to) => /^\d{5}$/.test(from) && /^\d{5}$/.test(to) && from <= to;
 
 export function regionCandidates(value) {
   const postal = String(value).match(/\b(\d{5})\b/);
@@ -55,4 +58,29 @@ export async function loadSfvRegion(region, period, signal) {
     return { specific: null, plants: null, url };
   }
   throw new Error('Der SFV hat für diesen Zeitraum keinen lesbaren Regionalwert geliefert.');
+}
+
+export async function loadSfvPostalRange(from, to, year, signal) {
+  const body = new URLSearchParams({ 'p5[f]': from, 'p5[t]': to, 'e[c]': '1', 'e[1]': year });
+  const response = await fetch(sfvCriteriaURL, { method: 'POST', body, credentials: 'omit', referrerPolicy: 'no-referrer', signal });
+  if (!response.ok) throw new Error('SFV-Auswertung ist zurzeit nicht erreichbar.');
+  const html = new DOMParser().parseFromString(await response.text(), 'text/html');
+  for (const table of html.querySelectorAll('table')) {
+    const rows = [...table.rows];
+    const find = label => rows.find(row => plain(row.cells[0]?.textContent ?? '') === label);
+    const years = find('Ertragsjahre');
+    const count = find('Anzahl PV-Anlagen');
+    const mean = find('Durchschnitt');
+    if (!years || !count || plain(mean?.cells[1]?.textContent ?? '') !== 'kWh/kWp') continue;
+    if (years.cells.length === 2 && count.cells.length === 2) return { specific: null, plants: 0, url: sfvCriteriaURL };
+    if (plain(years.cells[2]?.textContent ?? '') !== String(year)) continue;
+    const plants = cellNumber(count.cells[2]);
+    if (plants !== null) {
+      return { specific: plants > 0 ? cellNumber(mean.cells[2]) : null, plants, url: sfvCriteriaURL };
+    }
+  }
+  if (/keine (?:passenden? |verfügbaren? )?(?:PV[-‑]Anlagen|Ergebnisse|Erträge|Daten)/i.test(plain(html.querySelector('main')?.textContent ?? ''))) {
+    return { specific: null, plants: 0, url: sfvCriteriaURL };
+  }
+  throw new Error('Der SFV hat für diesen PLZ-Bereich keinen lesbaren Jahreswert geliefert.');
 }

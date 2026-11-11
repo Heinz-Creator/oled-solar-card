@@ -3142,6 +3142,7 @@ a{color:var(--mint);text-underline-offset:3px}label{display:grid;gap:4px;color:v
 .pro-hints{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}.pro-hints p{font-size:13px;color:var(--pro-muted);margin:6px 0}
 @container(max-width:660px){.pro{padding:12px}.pro-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.pro-charts,.sun-grid,.pro-hints{grid-template-columns:1fr}.pro-kpi,.pro-box{padding:11px}.chart-slot small{font-size:8px}.pro-nav button{padding-inline:8px}}
 @media(prefers-reduced-motion:reduce){.needle{transition:none}}
+.sfv-range input{width:7ch}.sfv-range-error{flex-basis:100%}.sfv-range-error:empty{display:none}
 `;
 
   // regionen-de.json
@@ -3149,7 +3150,9 @@ a{color:var(--mint);text-underline-offset:3px}label{display:grid;gap:4px;color:v
 
   // solar-region.js
   var SFV = "https://pv-ertraege.sfv.de/auswertung/region.html";
+  var sfvCriteriaURL = "https://pv-ertraege.sfv.de/auswertung/eigene.html";
   var regionURL = (region, year) => SFV + "?" + new URLSearchParams({ j: year, r: region, a: "jahr" });
+  var validPostalRange = (from, to) => /^\d{5}$/.test(from) && /^\d{5}$/.test(to) && from <= to;
   function regionCandidates(value) {
     const postal = String(value).match(/\b(\d{5})\b/);
     if (postal) return [postal[1].slice(0, 2)];
@@ -3197,6 +3200,30 @@ a{color:var(--mint);text-underline-offset:3px}label{display:grid;gap:4px;color:v
       return { specific: null, plants: null, url };
     }
     throw new Error("Der SFV hat für diesen Zeitraum keinen lesbaren Regionalwert geliefert.");
+  }
+  async function loadSfvPostalRange(from, to, year, signal) {
+    const body = new URLSearchParams({ "p5[f]": from, "p5[t]": to, "e[c]": "1", "e[1]": year });
+    const response = await fetch(sfvCriteriaURL, { method: "POST", body, credentials: "omit", referrerPolicy: "no-referrer", signal });
+    if (!response.ok) throw new Error("SFV-Auswertung ist zurzeit nicht erreichbar.");
+    const html = new DOMParser().parseFromString(await response.text(), "text/html");
+    for (const table of html.querySelectorAll("table")) {
+      const rows = [...table.rows];
+      const find = (label) => rows.find((row) => plain(row.cells[0]?.textContent ?? "") === label);
+      const years = find("Ertragsjahre");
+      const count = find("Anzahl PV-Anlagen");
+      const mean = find("Durchschnitt");
+      if (!years || !count || plain(mean?.cells[1]?.textContent ?? "") !== "kWh/kWp") continue;
+      if (years.cells.length === 2 && count.cells.length === 2) return { specific: null, plants: 0, url: sfvCriteriaURL };
+      if (plain(years.cells[2]?.textContent ?? "") !== String(year)) continue;
+      const plants = cellNumber(count.cells[2]);
+      if (plants !== null) {
+        return { specific: plants > 0 ? cellNumber(mean.cells[2]) : null, plants, url: sfvCriteriaURL };
+      }
+    }
+    if (/keine (?:passenden? |verfügbaren? )?(?:PV[-‑]Anlagen|Ergebnisse|Erträge|Daten)/i.test(plain(html.querySelector("main")?.textContent ?? ""))) {
+      return { specific: null, plants: 0, url: sfvCriteriaURL };
+    }
+    throw new Error("Der SFV hat für diesen PLZ-Bereich keinen lesbaren Jahreswert geliefert.");
   }
 
   // solar-pro.js
@@ -3344,13 +3371,25 @@ a{color:var(--mint);text-underline-offset:3px}label{display:grid;gap:4px;color:v
     save(event) {
       event.preventDefault();
       const data = new FormData(event.target);
-      if (event.target.matches("[data-region-search]")) {
-        const place = clean(data.get("regionPlace"));
-        this.settings.regionPlace = place;
+      if (event.target.matches("[data-region-search], [data-region-range]")) {
+        const range = event.target.hasAttribute("data-region-range");
+        if (range) {
+          const from = clean(data.get("regionFrom"), 5);
+          const to = clean(data.get("regionTo"), 5);
+          if (!validPostalRange(from, to)) {
+            event.target.querySelector("[data-range-error]").textContent = "Bitte fünfstellige PLZ eingeben. Die Von-PLZ muss kleiner oder gleich der Bis-PLZ sein.";
+            return;
+          }
+          this.settings.regionFrom = from;
+          this.settings.regionTo = to;
+        } else {
+          this.settings.regionPlace = clean(data.get("regionPlace"));
+        }
+        this.settings.regionMode = range ? "range" : "place";
         if (this.regional?.error) this.regional = null;
         this.persistSettings();
         this.render();
-        this.shadowRoot.querySelector("[data-region-search] input")?.focus({ preventScroll: true });
+        this.shadowRoot.querySelector(range ? "[data-region-range] input" : "[data-region-search] input")?.focus({ preventScroll: true });
         return;
       }
       const next = { ...this.settings };
@@ -3425,10 +3464,18 @@ a{color:var(--mint);text-underline-offset:3px}label{display:grid;gap:4px;color:v
     regionalView() {
       const place = this.regionPlace;
       return `<section class="pro-box pro-near sfv-region"><h3>Ertragsvergleich nach PLZ-Region</h3>
+      <p class="pro-caption">Der SFV sammelt gemeldete PV-Erträge. Verglichen wird die erzeugte Energie je installiertem kWp. So können Anlagen unterschiedlich groß sein. Ausrichtung, Neigung und Schatten werden hier nicht angeglichen.</p>
       <form class="pro-tools sfv-search" data-region-search>
         ${input("Ort in Deutschland oder PLZ", "regionPlace", place, 'maxlength="70" autocomplete="off"')}
         <button type="submit">Region vergleichen</button>
       </form>
+      <form class="pro-tools sfv-search sfv-range" data-region-range>
+        ${input("PLZ von", "regionFrom", this.settings.regionFrom, 'inputmode="numeric" pattern="[0-9]{5}" maxlength="5" autocomplete="off" required')}
+        ${input("PLZ bis", "regionTo", this.settings.regionTo, 'inputmode="numeric" pattern="[0-9]{5}" maxlength="5" autocomplete="off" required')}
+        <button type="submit">PLZ-Bereich vergleichen</button>
+        <span class="pro-caption sfv-range-error" data-range-error role="status"></span>
+      </form>
+      <p class="pro-caption">Die Ortssuche nutzt die ersten zwei PLZ-Ziffern. Von–bis filtert fünfstellig und vergleicht abgeschlossene Jahre.</p>
       <div data-region-result aria-live="polite">${this.regionContent()}</div>
       <div class="region-links">
         <a href="https://pvoutput.org/map.jsp" target="_blank" rel="noopener noreferrer">Einzelanlagen auf der PVOutput-Karte</a>
@@ -3438,21 +3485,44 @@ a{color:var(--mint);text-underline-offset:3px}label{display:grid;gap:4px;color:v
       </div>
     </section>`;
     }
-    regionContent() {
+    regionSelection() {
+      const period = comparablePeriod(this.range, this.date, this.today);
+      const { regionMode, regionFrom, regionTo } = this.settings;
+      if (regionMode === "range" && validPostalRange(regionFrom, regionTo)) {
+        const year = period.range === "year" ? period.year : Number(this.today.slice(0, 4)) - 1;
+        return {
+          period: { range: "year", date: String(year), year },
+          id: `${regionFrom}-${regionTo}`,
+          label: `PLZ ${regionFrom}–${regionTo}`,
+          url: sfvCriteriaURL,
+          load: (signal) => loadSfvPostalRange(regionFrom, regionTo, year, signal)
+        };
+      }
       const place = this.regionPlace;
-      if (!place) return '<p class="pro-caption">Gib einen Ort oder eine PLZ ein, um den öffentlichen Regionalwert zu laden.</p>';
+      if (!place) return { hint: "Gib einen Ort, eine PLZ oder einen PLZ-Bereich ein." };
       const regions = regionCandidates(place);
       if (regions.length !== 1) {
-        return regions.length ? `<p class="pro-caption">Mehrere PLZ-Bereiche passen zu diesem Ort (${regions.map((region) => region + "xxx").join(", ")}). Gib deine fünfstellige PLZ ein.</p>` : '<p class="pro-caption">Dieser Ortsname wurde im Ortsverzeichnis nicht gefunden. Versuch es mit der fünfstelligen PLZ.</p>';
+        return { hint: regions.length ? `Mehrere PLZ-Bereiche passen zu diesem Ort (${regions.map((region2) => region2 + "xxx").join(", ")}). Gib deine fünfstellige PLZ ein.` : "Dieser Ortsname wurde im Ortsverzeichnis nicht gefunden. Versuch es mit der fünfstelligen PLZ." };
       }
-      const period = comparablePeriod(this.range, this.date, this.today);
-      const key = regions[0] + "/" + period.date;
+      const [region] = regions;
+      return {
+        period,
+        id: region,
+        label: `PLZ ${region}xxx`,
+        url: regionURL(region, period.year),
+        load: (signal) => loadSfvRegion(region, period, signal)
+      };
+    }
+    regionContent() {
+      const selection = this.regionSelection();
+      if (selection.hint) return `<p class="pro-caption">${safe(selection.hint)}</p>`;
+      const { id, period, label, url } = selection;
+      const key = id + "/" + period.date;
       const state = this.regional?.key === key ? this.regional : null;
       const window2 = periodWindow(period.range, period.date, Date.now(), this.zone);
-      const label = safe(window2.label + " · PLZ " + regions[0] + "xxx");
-      const caption = `<p class="pro-caption">${label}</p>`;
+      const caption = `<p class="pro-caption">${safe(window2.label + " · " + label)}</p>`;
       if (state?.error) {
-        return caption + `<p class="pro-caption">${safe(state.error)} <a href="${safe(regionURL(regions[0], period.year))}" target="_blank" rel="noopener noreferrer">SFV-Auswertung öffnen</a></p>`;
+        return caption + `<p class="pro-caption">${safe(state.error)} <a href="${safe(url)}" target="_blank" rel="noopener noreferrer">SFV-Auswertung öffnen</a></p>`;
       }
       if (!state?.result) return caption + '<p class="pro-caption">Lade den Regionalwert vom SFV …</p>';
       const { result } = state;
@@ -3464,20 +3534,20 @@ a{color:var(--mint);text-underline-offset:3px}label{display:grid;gap:4px;color:v
       <div><i class="${color}" style="width:${max ? (100 * (value ?? 0) / max).toFixed(2) : 0}%"></i></div></div>`).join("") + `<p class="pro-caption">${result.plants === null ? "" : fmt(result.plants) + " meldende Anlagen · "}
         ${result.specific === null ? "Für diesen Zeitraum liegt kein Regionalwert vor. " : ""}
         ${own === null ? "Eigener Ertrag oder installierte Leistung für diesen Zeitraum fehlt. " : ""}
-        <a href="${safe(result.url)}" target="_blank" rel="noopener noreferrer">Veröffentlichte SFV-Auswertung</a></p>`;
+        <a href="${safe(result.url)}" target="_blank" rel="noopener noreferrer">${result.url === sfvCriteriaURL ? "SFV-Auswahlformular" : "Veröffentlichte SFV-Auswertung"}</a></p>`;
     }
     async refreshRegion() {
       const target = () => this.shadowRoot.querySelector("[data-region-result]");
       if (!target()) return;
-      const regions = regionCandidates(this.regionPlace);
-      if (regions.length !== 1) {
+      const selection = this.regionSelection();
+      if (selection.hint) {
         this.regionalRequest?.abort();
         this.regional = null;
         return;
       }
-      const period = comparablePeriod(this.range, this.date, this.today);
+      const { id, period } = selection;
       const window2 = periodWindow(period.range, period.date, Date.now(), this.zone);
-      const key = regions[0] + "/" + period.date;
+      const key = id + "/" + period.date;
       if (this.regional?.key === key) {
         if (this.report?.window.start === window2.start && this.report.window.end === window2.end && this.regional.result) {
           this.regional.own = this.ownSpecific(this.report);
@@ -3495,7 +3565,7 @@ a{color:var(--mint);text-underline-offset:3px}label{display:grid;gap:4px;color:v
       try {
         let result = this.regionCache.get(key);
         if (!result) {
-          result = await loadSfvRegion(regions[0], period, request.signal);
+          result = await selection.load(request.signal);
           if (this.regional !== state) return;
           if (this.regionCache.size >= 12) this.regionCache.delete(this.regionCache.keys().next().value);
           this.regionCache.set(key, result);
@@ -3730,7 +3800,7 @@ a{color:var(--mint);text-underline-offset:3px}label{display:grid;gap:4px;color:v
       <body><h1>${safe(config.title)} · PV-Bericht</h1><p>${safe(config.subtitle)} · ${safe(this.window.label)} · ${windowLabel}</p>
       <button id="print" type="button">Drucken oder als PDF speichern</button>
       ${reportContent(this.report, this.settings, this.settings.balance, config.capacity_kwp)}
-      ${this.regional?.result && regionCandidates(this.regionPlace).length === 1 ? `<section class="pro-box pro-near"><h3>Ertragsvergleich nach PLZ-Region</h3>${this.regionContent()}</section>` : ""}
+      ${this.regional?.result && !this.regionSelection().hint ? `<section class="pro-box pro-near"><h3>Ertragsvergleich nach PLZ-Region</h3>${this.regionContent()}</section>` : ""}
       ${this.settings.reference?.key === this.windowKey ? benchmark(this.report, this.settings.reference, config.capacity_kwp, this.windowKey) : ""}
       </body></html>`);
       target.document.close();

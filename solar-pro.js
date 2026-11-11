@@ -1,7 +1,7 @@
 import { decimal, energyReport, periodWindow, sunPath } from './solar-pro-data.js';
 import { benchmark, fmt, printStyles, reportContent, safe } from './solar-pro-view.js';
 import { proStyles } from './solar-pro-styles.js';
-import { comparablePeriod, loadSfvRegion, regionCandidates, regionURL } from './solar-region.js';
+import { comparablePeriod, loadSfvPostalRange, loadSfvRegion, regionCandidates, regionURL, sfvCriteriaURL, validPostalRange } from './solar-region.js';
 
 const RANGES = { day: 'Tag', month: 'Monat', year: 'Jahr' };
 const REFERENCE_SOURCES = { manual: 'Eigene Angabe', pvoutput: 'PVOutput', sfv: 'SFV Ertragsdatenbank' };
@@ -140,13 +140,25 @@ class OledSolarPro extends HTMLElement {
   save(event) {
     event.preventDefault();
     const data = new FormData(event.target);
-    if (event.target.matches('[data-region-search]')) {
-      const place = clean(data.get('regionPlace'));
-      this.settings.regionPlace = place;
+    if (event.target.matches('[data-region-search], [data-region-range]')) {
+      const range = event.target.hasAttribute('data-region-range');
+      if (range) {
+        const from = clean(data.get('regionFrom'), 5);
+        const to = clean(data.get('regionTo'), 5);
+        if (!validPostalRange(from, to)) {
+          event.target.querySelector('[data-range-error]').textContent = 'Bitte fünfstellige PLZ eingeben. Die Von-PLZ muss kleiner oder gleich der Bis-PLZ sein.';
+          return;
+        }
+        this.settings.regionFrom = from;
+        this.settings.regionTo = to;
+      } else {
+        this.settings.regionPlace = clean(data.get('regionPlace'));
+      }
+      this.settings.regionMode = range ? 'range' : 'place';
       if (this.regional?.error) this.regional = null;
       this.persistSettings();
       this.render();
-      this.shadowRoot.querySelector('[data-region-search] input')?.focus({ preventScroll: true });
+      this.shadowRoot.querySelector(range ? '[data-region-range] input' : '[data-region-search] input')?.focus({ preventScroll: true });
       return;
     }
     const next = { ...this.settings };
@@ -218,10 +230,18 @@ class OledSolarPro extends HTMLElement {
   regionalView() {
     const place = this.regionPlace;
     return `<section class="pro-box pro-near sfv-region"><h3>Ertragsvergleich nach PLZ-Region</h3>
+      <p class="pro-caption">Der SFV sammelt gemeldete PV-Erträge. Verglichen wird die erzeugte Energie je installiertem kWp. So können Anlagen unterschiedlich groß sein. Ausrichtung, Neigung und Schatten werden hier nicht angeglichen.</p>
       <form class="pro-tools sfv-search" data-region-search>
         ${input('Ort in Deutschland oder PLZ', 'regionPlace', place, 'maxlength="70" autocomplete="off"')}
         <button type="submit">Region vergleichen</button>
       </form>
+      <form class="pro-tools sfv-search sfv-range" data-region-range>
+        ${input('PLZ von', 'regionFrom', this.settings.regionFrom, 'inputmode="numeric" pattern="[0-9]{5}" maxlength="5" autocomplete="off" required')}
+        ${input('PLZ bis', 'regionTo', this.settings.regionTo, 'inputmode="numeric" pattern="[0-9]{5}" maxlength="5" autocomplete="off" required')}
+        <button type="submit">PLZ-Bereich vergleichen</button>
+        <span class="pro-caption sfv-range-error" data-range-error role="status"></span>
+      </form>
+      <p class="pro-caption">Die Ortssuche nutzt die ersten zwei PLZ-Ziffern. Von–bis filtert fünfstellig und vergleicht abgeschlossene Jahre.</p>
       <div data-region-result aria-live="polite">${this.regionContent()}</div>
       <div class="region-links">
         <a href="https://pvoutput.org/map.jsp" target="_blank" rel="noopener noreferrer">Einzelanlagen auf der PVOutput-Karte</a>
@@ -232,23 +252,38 @@ class OledSolarPro extends HTMLElement {
     </section>`;
   }
 
-  regionContent() {
+  regionSelection() {
+    const period = comparablePeriod(this.range, this.date, this.today);
+    const { regionMode, regionFrom, regionTo } = this.settings;
+    if (regionMode === 'range' && validPostalRange(regionFrom, regionTo)) {
+      const year = period.range === 'year' ? period.year : Number(this.today.slice(0, 4)) - 1;
+      return { period: { range: 'year', date: String(year), year }, id: `${regionFrom}-${regionTo}`,
+        label: `PLZ ${regionFrom}–${regionTo}`, url: sfvCriteriaURL,
+        load: signal => loadSfvPostalRange(regionFrom, regionTo, year, signal) };
+    }
     const place = this.regionPlace;
-    if (!place) return '<p class="pro-caption">Gib einen Ort oder eine PLZ ein, um den öffentlichen Regionalwert zu laden.</p>';
+    if (!place) return { hint: 'Gib einen Ort, eine PLZ oder einen PLZ-Bereich ein.' };
     const regions = regionCandidates(place);
     if (regions.length !== 1) {
-      return regions.length
-        ? `<p class="pro-caption">Mehrere PLZ-Bereiche passen zu diesem Ort (${regions.map(region => region + 'xxx').join(', ')}). Gib deine fünfstellige PLZ ein.</p>`
-        : '<p class="pro-caption">Dieser Ortsname wurde im Ortsverzeichnis nicht gefunden. Versuch es mit der fünfstelligen PLZ.</p>';
+      return { hint: regions.length
+        ? `Mehrere PLZ-Bereiche passen zu diesem Ort (${regions.map(region => region + 'xxx').join(', ')}). Gib deine fünfstellige PLZ ein.`
+        : 'Dieser Ortsname wurde im Ortsverzeichnis nicht gefunden. Versuch es mit der fünfstelligen PLZ.' };
     }
-    const period = comparablePeriod(this.range, this.date, this.today);
-    const key = regions[0] + '/' + period.date;
+    const [region] = regions;
+    return { period, id: region, label: `PLZ ${region}xxx`, url: regionURL(region, period.year),
+      load: signal => loadSfvRegion(region, period, signal) };
+  }
+
+  regionContent() {
+    const selection = this.regionSelection();
+    if (selection.hint) return `<p class="pro-caption">${safe(selection.hint)}</p>`;
+    const { id, period, label, url } = selection;
+    const key = id + '/' + period.date;
     const state = this.regional?.key === key ? this.regional : null;
     const window = periodWindow(period.range, period.date, Date.now(), this.zone);
-    const label = safe(window.label + ' · PLZ ' + regions[0] + 'xxx');
-    const caption = `<p class="pro-caption">${label}</p>`;
+    const caption = `<p class="pro-caption">${safe(window.label + ' · ' + label)}</p>`;
     if (state?.error) {
-      return caption + `<p class="pro-caption">${safe(state.error)} <a href="${safe(regionURL(regions[0], period.year))}" target="_blank" rel="noopener noreferrer">SFV-Auswertung öffnen</a></p>`;
+      return caption + `<p class="pro-caption">${safe(state.error)} <a href="${safe(url)}" target="_blank" rel="noopener noreferrer">SFV-Auswertung öffnen</a></p>`;
     }
     if (!state?.result) return caption + '<p class="pro-caption">Lade den Regionalwert vom SFV …</p>';
     const { result } = state;
@@ -262,21 +297,21 @@ class OledSolarPro extends HTMLElement {
       + `<p class="pro-caption">${result.plants === null ? '' : fmt(result.plants) + ' meldende Anlagen · '}
         ${result.specific === null ? 'Für diesen Zeitraum liegt kein Regionalwert vor. ' : ''}
         ${own === null ? 'Eigener Ertrag oder installierte Leistung für diesen Zeitraum fehlt. ' : ''}
-        <a href="${safe(result.url)}" target="_blank" rel="noopener noreferrer">Veröffentlichte SFV-Auswertung</a></p>`;
+        <a href="${safe(result.url)}" target="_blank" rel="noopener noreferrer">${result.url === sfvCriteriaURL ? 'SFV-Auswahlformular' : 'Veröffentlichte SFV-Auswertung'}</a></p>`;
   }
 
   async refreshRegion() {
     const target = () => this.shadowRoot.querySelector('[data-region-result]');
     if (!target()) return;
-    const regions = regionCandidates(this.regionPlace);
-    if (regions.length !== 1) {
+    const selection = this.regionSelection();
+    if (selection.hint) {
       this.regionalRequest?.abort();
       this.regional = null;
       return;
     }
-    const period = comparablePeriod(this.range, this.date, this.today);
+    const { id, period } = selection;
     const window = periodWindow(period.range, period.date, Date.now(), this.zone);
-    const key = regions[0] + '/' + period.date;
+    const key = id + '/' + period.date;
     if (this.regional?.key === key) {
       if (this.report?.window.start === window.start && this.report.window.end === window.end && this.regional.result) {
         this.regional.own = this.ownSpecific(this.report);
@@ -294,7 +329,7 @@ class OledSolarPro extends HTMLElement {
     try {
       let result = this.regionCache.get(key);
       if (!result) {
-        result = await loadSfvRegion(regions[0], period, request.signal);
+        result = await selection.load(request.signal);
         if (this.regional !== state) return;
         if (this.regionCache.size >= 12) this.regionCache.delete(this.regionCache.keys().next().value);
         this.regionCache.set(key, result);
@@ -541,7 +576,7 @@ class OledSolarPro extends HTMLElement {
       <body><h1>${safe(config.title)} · PV-Bericht</h1><p>${safe(config.subtitle)} · ${safe(this.window.label)} · ${windowLabel}</p>
       <button id="print" type="button">Drucken oder als PDF speichern</button>
       ${reportContent(this.report, this.settings, this.settings.balance, config.capacity_kwp)}
-      ${this.regional?.result && regionCandidates(this.regionPlace).length === 1
+      ${this.regional?.result && !this.regionSelection().hint
         ? `<section class="pro-box pro-near"><h3>Ertragsvergleich nach PLZ-Region</h3>${this.regionContent()}</section>` : ''}
       ${this.settings.reference?.key === this.windowKey ? benchmark(this.report, this.settings.reference, config.capacity_kwp, this.windowKey) : ''}
       </body></html>`);

@@ -30,5 +30,5 @@ a{color:var(--mint);text-underline-offset:3px}label{display:grid;gap:4px;color:v
 .pro-hints{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}.pro-hints p{font-size:13px;color:var(--pro-muted);margin:6px 0}
 @container(max-width:660px){.pro{padding:12px}.pro-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.pro-charts,.sun-grid,.pro-hints{grid-template-columns:1fr}.pro-kpi,.pro-box{padding:11px}.chart-slot small{font-size:8px}.pro-nav button{padding-inline:8px}}
 @media(prefers-reduced-motion:reduce){.needle{transition:none}}
+.sfv-range input{width:7ch}.sfv-range-error{flex-basis:100%}.sfv-range-error:empty{display:none}
 `;
-
