@@ -12,6 +12,16 @@ Animierte Photovoltaik-Karte mit Sonnenbahn, Gerätemotiven und Live-Stromfluss.
 
 ## Installation
 
+### Über HACS oder den Home-Assistant-Marktplatz
+
+1. Öffne **HACS → ⋮ → Benutzerdefinierte Repositorys**. Ab Home Assistant 2026.11 öffne **Einstellungen → Marktplatz → Aus Link hinzufügen**.
+2. Füge `https://github.com/Heinz-Creator/oled-solar-card` in der Kategorie **Dashboard** hinzu.
+3. Installiere **OLED Solar** und lade die Dashboard-Seite neu. Füge die Karte **OLED Solar** hinzu und wähle mindestens deinen PV-Leistungssensor aus.
+
+Wenn du deine Dashboard-Ressourcen über YAML verwaltest, übernimm die Modul-URL aus dem Installationsdialog. Wenn du OLED Solar schon als manuelle Dashboard-Ressource eingebunden hast, entferne deren alten Ressourceneintrag nach der Installation, damit Home Assistant das Modul nur einmal lädt.
+
+### Manuell installieren
+
 1. Lade [dist/oled-solar-card.js](dist/oled-solar-card.js) über **Download raw file** herunter und kopiere die Datei in den Home-Assistant-Ordner `www`.
 2. Registriere unter **Einstellungen → Dashboards → Ressourcen** die URL `/local/oled-solar-card.js` als **JavaScript-Modul**. Falls der Menüpunkt fehlt, aktiviere den erweiterten Modus im Benutzerprofil.
 3. Füge im Dashboard eine Karte **OLED Solar** hinzu. Wähle im visuellen Editor mindestens einen PV-Leistungssensor aus. Für die manuelle Einrichtung stehen Vorlagen für [Kompakt](examples/kompakt.yaml) und [Pro](examples/pro.yaml) bereit.
