@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="de">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OLED Solar · Vorschau</title>
+<style>
+  :root{color-scheme:dark;background:#060707;color:#f8f6ed;font:15px/1.5 "Instrument Sans",system-ui,sans-serif}
+  *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 48% 0%,#202015,#060707 610px);min-height:100vh}
+  main{max-width:1140px;margin:auto;padding:32px 16px 36px}
+  .preview-tools{display:flex;align-items:end;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:0 3px 15px}
+  .preview-tools p{margin:0;font-size:13px;color:#a9afa9}.preview-tools b{color:#f5e4b5;font-size:14px}
+  .fields{display:flex;gap:8px;flex-wrap:wrap}label{font-size:12px;color:#b7bcb7;display:flex;gap:6px;align-items:center}
+  select{min-height:44px;font:inherit;color:#f8f6ed;border:1px solid #454b3d;border-radius:9px;background:#151814;padding:0 7px}
+  select:focus-visible{outline:2px solid #ffd16a;outline-offset:2px}
+  .preview-tools button{min-height:44px;font:inherit;font-size:12px;color:#f8f6ed;border:1px solid #454b3d;border-radius:9px;background:#151814;padding:0 9px;cursor:pointer}
+  .preview-editor{background:#101614;border:1px solid #37413b;border-radius:15px;padding:14px;margin-bottom:12px}
+  @media(max-width:640px){main{padding:15px 9px 23px}.preview-tools{padding:0 3px 10px}.fields{gap:6px 10px}}
+</style>
+<main>
+  <div class="preview-tools">
+    <p><b>OLED Zuhause</b><br>Interaktive Vorschau mit Beispieldaten</p>
+    <div class="fields">
+      <label>Anlage
+        <select id="system">
+          <option value="growatt">Growatt</option>
+          <option value="hybrid">Hybridanlage</option>
+          <option value="mini">Balkonkraftwerk</option>
+        </select>
+      </label>
+      <label>Szenario
+        <select id="scene">
+          <option value="surplus">Sonnenüberschuss</option>
+          <option value="import">Netzbezug</option>
+          <option value="night">Nacht</option>
+          <option value="error">Sensorausfall</option>
+          <option value="stale">Veraltete Messwerte</option>
+        </select>
+      </label>
+      <button id="demo-editor" type="button" aria-expanded="false">Sensoren zuordnen</button>
+    </div>
+  </div>
+  <div class="preview-editor" hidden></div>
+  <oled-solar-card></oled-solar-card>
+</main>
+<!-- CARD_BUNDLE -->
+<script>
+  const profiles = {
+    growatt: { subtitle: 'Growatt MOD 10KTL3-XH', capacity: 6.7, keys: ['solar','house','grid','yield_today','forecast_today','forecast_remaining','forecast_tomorrow'] },
+    hybrid: { subtitle: 'Hybridanlage mit Speicher und Wallbox', capacity: 12.4, keys: ['solar','house','grid','battery','battery_soc','ev','yield_today','house_today','import_today','export_today','forecast_today','forecast_remaining','forecast_tomorrow'] },
+    mini: { subtitle: 'Balkonkraftwerk', capacity: 0.9, keys: ['solar','yield_today'] },
+  };
+  const scenes = {
+    surplus: { solar: 4280, house: 1620, grid: -2660, battery: 1050, ev: 940 },
+    import: { solar: 970, house: 2610, grid: 1640, battery: -900, ev: 1200 },
+    night: { solar: 0, house: 690, grid: 690, battery: -500, ev: 0 },
+    error: { solar: 'unavailable', house: 730, grid: 730, battery: 'unavailable', ev: 0 },
+    stale: { solar: 2870, house: 1430, grid: -1440, battery: 0, ev: 0 },
+  };
+  const system = document.querySelector('#system');
+  const scene = document.querySelector('#scene');
+  const card = document.querySelector('oled-solar-card');
+  const editorButton = document.querySelector('#demo-editor');
+  const editorPanel = document.querySelector('.preview-editor');
+  const editor = card.constructor.getConfigElement();
+  editorPanel.append(editor);
+  editorButton.addEventListener('click', () => {
+    editorPanel.hidden = !editorPanel.hidden;
+    editorButton.setAttribute('aria-expanded', String(!editorPanel.hidden));
+  });
+  editor.addEventListener('config-changed', event => card.setConfig(event.detail.config));
+  const labels = { solar: 'PV Ost', solar_west: 'PV West', heat: 'Wärmepumpe', pool: 'Poolpumpe' };
+  function refresh() {
+    const profile = profiles[system.value];
+    const live = { ...scenes[scene.value] };
+    if (system.value === 'hybrid' && Number.isFinite(live.solar)) live.grid = live.house + live.battery - live.solar;
+    if (system.value === 'mini' && Number.isFinite(live.solar)) live.solar = Math.round(live.solar / 6);
+    const values = { ...live, battery_soc: 74, yield_today: system.value === 'mini' ? 2.65 : 18.4, house_today: 12.2, import_today: 3.1, export_today: 7.2,
+      forecast_today: 23.6, forecast_remaining: scene.value === 'night' ? 0 : 5.2, forecast_tomorrow: 16.8 };
+    const ids = Object.fromEntries(profile.keys.map(key => [key, 'sensor.demo_' + key]));
+    const hybrid = system.value === 'hybrid';
+    if (hybrid) {
+      values.solar_west = typeof values.solar === 'number' ? Math.round(values.solar * .39) : values.solar;
+      if (typeof values.solar === 'number') values.solar -= values.solar_west;
+      values.heat = scene.value === 'surplus' ? 350 : 200;
+      values.pool = scene.value === 'surplus' ? 240 : 0;
+    }
+    const states = Object.fromEntries([...profile.keys, ...(hybrid ? ['solar_west', 'heat', 'pool'] : [])].map(key => {
+      const energy = key.endsWith('_today') || key.startsWith('forecast_');
+      const unit = energy ? 'kWh' : key === 'battery_soc' ? '%' : 'W';
+      const stale = scene.value === 'stale' && !energy && key !== 'battery_soc';
+      return [ids[key] ?? 'sensor.demo_' + key, { state: String(values[key]), attributes: { unit_of_measurement: unit, friendly_name: labels[key] ?? key },
+        last_updated: new Date(Date.now() - (stale ? 55 : 0) * 60000).toISOString() }];
+    }));
+    const config = { demo: true, edition: 'pro', default_view: 'flow',
+      demo_hour: scene.value === 'night' ? 23.25 : scene.value === 'import' ? 8.75 : 13.5,
+      pv_inputs: hybrid ? ['sensor.demo_solar_west'] : [],
+      devices: hybrid ? [{ entity: 'sensor.demo_heat', kind: 'heat' }, { entity: 'sensor.demo_pool', kind: 'pool' }] : [],
+      pro: { buy_ct_kwh: 32, feed_in_ct_kwh: 8, latitude: 52.52, longitude: 13.405,
+        place: 'Berlin · Beispiel', ev_min_kw: 1.4,
+        arrays: system.value === 'hybrid'
+          ? [{ name: 'Ostdach', azimuth: 90, tilt: 30, modules: 14 }, { name: 'Westdach', azimuth: 270, tilt: 30, modules: 14 }]
+          : [{ name: 'Süddach', azimuth: 180, tilt: 25, modules: system.value === 'mini' ? 2 : 16 }],
+      }, appearance_id: 'demo', subtitle: profile.subtitle, capacity_kwp: profile.capacity, entities: ids };
+    card.setConfig(config);
+    const hass = { states, config: { time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone } };
+    card.hass = hass;
+    editor.setConfig(config);
+    editor.hass = hass;
+  }
+  system.addEventListener('change', refresh);
+  scene.addEventListener('change', refresh);
+  refresh();
+</script>
+</html>
