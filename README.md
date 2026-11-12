@@ -14,9 +14,13 @@ Animierte Photovoltaik-Karte mit Sonnenbahn, Gerätemotiven und Live-Stromfluss.
 
 ### Über HACS oder den Home-Assistant-Marktplatz
 
+[![In HACS öffnen](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Heinz-Creator&repository=oled-solar-card&category=plugin)
+
 1. Öffne **Einstellungen → Marketplace → Über Link hinzufügen**. In älteren Home-Assistant-Versionen öffne **HACS → ⋮ → Benutzerdefinierte Repositorys** und wähle die Kategorie **Dashboard**.
 2. Füge `https://github.com/Heinz-Creator/oled-solar-card` hinzu. Der Marketplace erkennt den Typ **Dashboard** automatisch.
 3. Installiere **OLED Solar** und lade die Dashboard-Seite neu. Füge die Karte **OLED Solar** hinzu und wähle mindestens deinen PV-Leistungssensor aus.
+
+Der Marketplace und HACS laden die Datei direkt aus GitHub. Die Schritte unter **Manuell installieren** sind für eine Installation per Dateikopie gedacht.
 
 Wenn du deine Dashboard-Ressourcen über YAML verwaltest, übernimm die Modul-URL aus dem Installationsdialog. Wenn du OLED Solar schon als manuelle Dashboard-Ressource eingebunden hast, entferne deren alten Ressourceneintrag nach der Installation, damit Home Assistant das Modul nur einmal lädt.
 
